@@ -156,9 +156,8 @@ const MapDisplay: React.FC<MapDisplayProps> = ({
         iconAnchor: [30, 30],
         html: `
           <div class="relative w-full h-full flex items-center justify-center">
-            <div class="absolute w-full h-full rounded-full bg-blue-400 opacity-20 animate-ping"></div>
-            <div class="user-sun-indicator absolute top-0 right-0 w-5 h-5 bg-amber-400 rounded-full border-2 border-white shadow-lg transition-transform scale-0 flex items-center justify-center text-[10px]">☀️</div>
-            <div class="w-12 h-12 rounded-full bg-[url('https://raw.githubusercontent.com/rutaviz/glitch-hello-website/refs/heads/master/Untitled_Artwork_79_1_99x100.png')] bg-cover bg-center shadow-2xl z-10"></div>
+            <div class="user-sun-indicator absolute top-0 right-0 w-5 h-5 bg-amber-400 rounded-full border-2  transition-transform scale-0 flex items-center justify-center text-[10px]">☀️</div>
+            <img src="/assets/favicon1.png" class="w-20 h-20 rounded-full object-cover shadow-2xl z-10 animation-pulse-scale 2s infinite" alt="" />
           </div>
         `
       });
