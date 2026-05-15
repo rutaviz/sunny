@@ -1,0 +1,7 @@
+{
+  "name": "SunnyPath Explorer",
+  "description": "Generate sun-optimized walking loops using real-time shadow data from ShadeMap. Ensure your daily walk is more than 50% sunlit based on your current position.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
