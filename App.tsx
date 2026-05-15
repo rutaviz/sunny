@@ -1,6 +1,5 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import Header from './components/Header';
 import MapDisplay from './components/MapDisplay';
 import LoadingScreen from './components/LoadingScreen';
 import { Coordinate, PathResult, BenchResult, AppStatus, WeatherInfo, AppMode, SunTrackingState } from './types';
@@ -323,7 +322,6 @@ const App: React.FC = () => {
   return (
     <div className="flex flex-col h-screen max-h-screen relative overflow-hidden">
       {isBlocked && <LoadingScreen message={loadingMessage || 'Loading...'} />}
-      <Header />
       <main className="flex-1 flex overflow-hidden relative">
         {showCongrats && (
           <div className="fixed inset-0 z-[5000] flex items-center justify-center p-6 bg-slate-900/40 backdrop-blur-md animate-in fade-in duration-300">
@@ -339,14 +337,14 @@ const App: React.FC = () => {
         )}
 
         {showMilestoneToast && (
-          <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[5001] bg-emerald-500 text-white px-6 py-3 rounded-2xl shadow-xl flex items-center gap-3 animate-in slide-in-from-top-4">
+          <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[5001] bg-emerald-500 text-white px-6 py-3 rounded-2xl shadow-xl flex items-center gap-3 animate-in slide-in-from-top-4">
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
             <span className="font-black text-sm uppercase tracking-wider">2 Min Reached!</span>
           </div>
         )}
 
         <div className={`
-          fixed md:relative z-[2000] h-[calc(100vh-72px)] w-[85%] md:w-96 
+          fixed md:relative z-[2000] h-full w-[85%] md:w-96 
           bg-white/95 md:bg-white backdrop-blur-xl md:backdrop-blur-none
           border-r border-slate-200 p-6 flex flex-col gap-6 shadow-2xl md:shadow-none 
           transition-transform duration-300 ease-in-out
