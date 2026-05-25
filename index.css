@@ -1,5 +1,55 @@
 
 /* Base styles for SunnyPath */
+@font-face {
+  font-family: "Nyght Serif";
+  src:
+    local("Nyght Serif Light Italic"),
+    url("/assets/fonts/NyghtSerif-LightItalic.woff2") format("woff2");
+  font-style: italic;
+  font-weight: 300;
+  font-display: auto;
+}
+
+@font-face {
+  font-family: "Nyght Serif";
+  src:
+    local("Nyght Serif Regular"),
+    url("/assets/fonts/NyghtSerif-Regular.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: auto;
+}
+
+@font-face {
+  font-family: "Nyght Serif";
+  src:
+    local("Nyght Serif Regular Italic"),
+    url("/assets/fonts/NyghtSerif-RegularItalic.woff2") format("woff2");
+  font-style: italic;
+  font-weight: 400;
+  font-display: auto;
+}
+
+@font-face {
+  font-family: "Fixel Display";
+  src:
+    local("Fixel Display Light"),
+    url("/assets/fonts/FixelDisplay-Light.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 300;
+  font-display: auto;
+}
+
+@font-face {
+  font-family: "Fixel Display";
+  src:
+    local("Fixel Display Regular"),
+    url("/assets/fonts/FixelDisplay-Regular.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: auto;
+}
+
 :root {
   --sun-color: #f59e0b;
 }
@@ -21,4 +71,85 @@
   background: none;
   border: none;
   pointer-events: none;
+}
+
+.font-nyght-light-italic {
+  font-family: "Nyght Serif";
+  font-style: italic;
+  font-weight: 300;
+}
+
+.font-nyght-regular {
+  font-family: "Nyght Serif";
+  font-style: normal;
+  font-weight: 400;
+}
+
+.font-nyght-regular-italic {
+  font-family: "Nyght Serif";
+  font-style: italic;
+  font-weight: 400;
+}
+
+.font-fixel-light {
+  font-family: "Fixel Display";
+  font-style: normal;
+  font-weight: 300;
+}
+
+.font-fixel-regular {
+  font-family: "Fixel Display";
+  font-style: normal;
+  font-weight: 400;
+}
+
+@keyframes pulse-scale {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.5); }
+}
+
+@keyframes slide-up-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-slide-up-fade-in {
+  opacity: 0;
+  animation: slide-up-fade-in 2s ease-out 0s forwards;
+}
+
+.animate-slide-up-fade-in-delayed {
+  opacity: 0;
+  animation: slide-up-fade-in 2s ease-out 0.2s forwards;
+}
+
+@keyframes action-button-exit {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(var(--btn-exit-shift, -33px));
+  }
+}
+
+.animate-action-button-exit {
+  animation: action-button-exit 1s ease-in forwards;
+  pointer-events: none;
+}
+
+.animate-action-button-exit-delayed {
+  animation: action-button-exit 1s ease-in 0.5s forwards;
+  pointer-events: none;
+}
+
+.map-slide-panel .leaflet-container {
+  border-radius: 0;
 }

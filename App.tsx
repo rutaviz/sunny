@@ -1,15 +1,19 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import MapDisplay from './components/MapDisplay';
+import FlowerMascot from './components/FlowerMascot';
 import LoadingScreen from './components/LoadingScreen';
+import MapDisplay from './components/MapDisplay';
 import { Coordinate, PathResult, BenchResult, AppStatus, WeatherInfo, AppMode, SunTrackingState } from './types';
-import { findOptimalSunnyPath } from './services/pathService';
+import { findOptimalSunnyPath, pickNextScoutPath } from './services/pathService';
 import { findSunnyBenches } from './services/benchService';
 import { fetchSunlightOutlook } from './services/weatherService';
 import { calculateSunScore } from './services/shadeService';
 
 const SUN_GOAL_MINUTES = 10;
 const SUN_MILESTONE_MINUTES = 2;
+const SHOW_SUN_TIME_LABEL = false;
+const MAP_SLIDE_MS = 2000;
+const ACTION_BUTTON_EXIT_TOTAL_MS = 2500;
 
 const App: React.FC = () => {
   const [status, setStatus] = useState<AppStatus>(AppStatus.IDLE);
@@ -28,7 +32,15 @@ const App: React.FC = () => {
   const [isPinningMode, setIsPinningMode] = useState(false);
   const [isLocationTimedOut, setIsLocationTimedOut] = useState(false);
   const [minLoadingPassed, setMinLoadingPassed] = useState(false);
-  
+  const [showDurationPanel, setShowDurationPanel] = useState(false);
+  const [isMapOpen, setIsMapOpen] = useState(false);
+  const [mapSettled, setMapSettled] = useState(false);
+  const [isMapClosing, setIsMapClosing] = useState(false);
+  const [mapSlideReady, setMapSlideReady] = useState(false);
+  const [buttonsExiting, setButtonsExiting] = useState(false);
+  const [buttonsExitComplete, setButtonsExitComplete] = useState(false);
+  const [exitLeadButton, setExitLeadButton] = useState<'walk' | 'sit' | null>(null);
+
   // Exposure Tracking State
   const [tracking, setTracking] = useState<SunTrackingState>({
     totalSeconds: 0,
@@ -58,6 +70,27 @@ const App: React.FC = () => {
   const effectiveTimeRef = useRef<Date>(new Date());
   const lastSunCheckTimeRef = useRef<number>(0);
   const lastTickTimestampRef = useRef<number>(Date.now());
+  const walkBtnRef = useRef<HTMLButtonElement>(null);
+  const sitBtnRef = useRef<HTMLButtonElement>(null);
+  const buttonsExitTimerRef = useRef<number | null>(null);
+
+  const resetButtonExitState = useCallback(() => {
+    if (buttonsExitTimerRef.current !== null) {
+      window.clearTimeout(buttonsExitTimerRef.current);
+      buttonsExitTimerRef.current = null;
+    }
+    setButtonsExiting(false);
+    setButtonsExitComplete(false);
+    setExitLeadButton(null);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (buttonsExitTimerRef.current !== null) {
+        window.clearTimeout(buttonsExitTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => { userLocationRef.current = userLocation; }, [userLocation]);
   useEffect(() => { isTrackingRef.current = isTracking; }, [isTracking]);
@@ -228,6 +261,16 @@ const App: React.FC = () => {
     setIsPinningMode(false); 
   };
 
+  const handleSelectScout = useCallback((scout: PathResult) => {
+    setGeneratedPath((prev) =>
+      prev?.allScouts ? { ...scout, allScouts: prev.allScouts } : scout
+    );
+  }, []);
+
+  const handleStartWalk = useCallback(() => {
+    setIsTracking(true);
+  }, []);
+
   const locateUser = useCallback(() => {
     stopWatchingLocation();
     setStatus(AppStatus.LOCATING);
@@ -293,12 +336,13 @@ const App: React.FC = () => {
 
   useEffect(() => { locateUser(); return () => stopWatchingLocation(); }, []);
 
-  const handleAction = async () => {
+  const handleAction = async (selectedMode: AppMode = mode) => {
     if (!userLocation) return;
+    setMode(selectedMode);
     setStatus(AppStatus.GENERATING);
     setError(null);
     try {
-      if (mode === AppMode.WALK) {
+      if (selectedMode === AppMode.WALK) {
         const path = await findOptimalSunnyPath(userLocation, duration, (msg) => setLoadingMessage(msg), isSimulating ? effectiveTime : undefined);
         setGeneratedPath(path);
         if (path.sunScore < 30) setShowAllScouts(true);
@@ -308,171 +352,364 @@ const App: React.FC = () => {
         setFoundBenches(benches);
       }
       setStatus(AppStatus.READY);
+      setIsMapOpen(true);
+      setIsMapClosing(false);
+      setMapSettled(false);
       if (window.innerWidth < 768) setIsSidebarOpen(false);
     } catch (err: any) {
       setError(err.message || 'Search failed.');
       setStatus(AppStatus.ERROR);
+      resetButtonExitState();
     }
   };
 
+  const handleNewPath = useCallback(() => {
+    if (!generatedPath) return;
+    if (generatedPath.allScouts && generatedPath.allScouts.length > 1) {
+      const next = pickNextScoutPath(generatedPath);
+      if (next) setGeneratedPath(next);
+      return;
+    }
+    if (!userLocation) return;
+    void handleAction(AppMode.WALK);
+  }, [generatedPath, userLocation]);
+
+  const handleActionWithExit = useCallback(
+    (selectedMode: AppMode) => {
+      if (!userLocation || buttonsExiting) return;
+
+      [walkBtnRef, sitBtnRef].forEach((ref) => {
+        const el = ref.current;
+        if (el) {
+          el.style.setProperty('--btn-exit-shift', `-${el.offsetWidth / 3}px`);
+        }
+      });
+
+      setExitLeadButton(selectedMode === AppMode.WALK ? 'walk' : 'sit');
+      setButtonsExiting(true);
+      setButtonsExitComplete(false);
+      if (buttonsExitTimerRef.current !== null) {
+        window.clearTimeout(buttonsExitTimerRef.current);
+      }
+      buttonsExitTimerRef.current = window.setTimeout(() => {
+        setButtonsExitComplete(true);
+        buttonsExitTimerRef.current = null;
+      }, ACTION_BUTTON_EXIT_TOTAL_MS);
+
+      void handleAction(selectedMode);
+    },
+    [userLocation, buttonsExiting, handleAction]
+  );
+
   const isBlocked = !minLoadingPassed || status === AppStatus.LOCATING || status === AppStatus.GENERATING || status === AppStatus.CHECKING_WEATHER;
+
+  const isInitialBlocked =
+    !minLoadingPassed ||
+    status === AppStatus.LOCATING ||
+    status === AppStatus.CHECKING_WEATHER;
+
+  const showActionButtons = !isInitialBlocked && !buttonsExitComplete;
+
+  const mascotCondition = useMemo(() => {
+    if (!minLoadingPassed || status === AppStatus.LOCATING || status === AppStatus.CHECKING_WEATHER) {
+      return 0;
+    }
+    if (status === AppStatus.GENERATING) {
+      return 2;
+    }
+    return 1;
+  }, [minLoadingPassed, status]);
+
   const sunnyMinutes = Math.floor(tracking.totalSeconds / 60);
   const sunnyRemainingSeconds = Math.floor(tracking.totalSeconds % 60);
+  const weatherLabel = weather ? `${Math.round(weather.temp)} °C` : '-- °C';
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setMapSlideReady(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
+    if (!isMapOpen) {
+      setMapSettled(false);
+      return;
+    }
+    setMapSettled(false);
+    const timer = window.setTimeout(() => {
+      window.dispatchEvent(new Event('resize'));
+    }, MAP_SLIDE_MS);
+    return () => window.clearTimeout(timer);
+  }, [isMapOpen]);
+
+  const handleMapPanelTransitionEnd = (event: React.TransitionEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget) return;
+    if (event.propertyName !== 'transform') return;
+    if (isMapOpen) {
+      setMapSettled(true);
+    } else {
+      setIsMapClosing(false);
+    }
+  };
+
+  const openMap = () => {
+    setIsMapOpen(true);
+    setIsMapClosing(false);
+    setMapSettled(false);
+  };
+
+  const closeMap = () => {
+    setIsMapOpen(false);
+    setIsMapClosing(true);
+    setMapSettled(false);
+    resetButtonExitState();
+  };
+
+  const showSettledBackButton = isMapOpen && mapSettled && !isMapClosing;
+  const showMapCircleControl = isMapOpen || isMapClosing;
+
+  const mapCircleTransformClass = showSettledBackButton
+    ? 'translate-x-0'
+    : '-translate-x-1/2';
 
   return (
-    <div className="flex flex-col h-screen max-h-screen relative overflow-hidden">
+    <div className="h-screen max-h-screen relative overflow-x-hidden overflow-y-visible bg-[#e7e5e0] text-[#101010]">
       {isBlocked && <LoadingScreen message={loadingMessage || 'Loading...'} />}
-      <main className="flex-1 flex overflow-hidden relative">
-        {showCongrats && (
-          <div className="fixed inset-0 z-[5000] flex items-center justify-center p-6 bg-slate-900/40 backdrop-blur-md animate-in fade-in duration-300">
-            <div className="bg-white rounded-[3rem] p-10 shadow-2xl border-4 border-amber-400 max-w-sm text-center transform scale-100 animate-in zoom-in-95">
-              <div className="w-24 h-24 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-6 text-amber-500 animate-bounce">
-                <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>
-              </div>
-              <h2 className="text-2xl font-black text-slate-900 mb-2">Sun Master!</h2>
-              <p className="text-slate-500 font-medium mb-8">Congrats! You've soaked up <span className="text-amber-600 font-bold">{SUN_GOAL_MINUTES} minutes</span>.</p>
-              <button onClick={() => setShowCongrats(false)} className="w-full sunny-gradient py-4 rounded-2xl text-white font-black">Keep Glowing</button>
+
+      {showCongrats && (
+        <div className="fixed inset-0 z-[5000] flex items-center justify-center p-6 bg-slate-900/40 backdrop-blur-md animate-in fade-in duration-300">
+          <div className="bg-white rounded-[3rem] p-10 shadow-2xl border-4 border-amber-400 max-w-sm text-center transform scale-100 animate-in zoom-in-95">
+            <div className="w-24 h-24 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-6 text-amber-500 animate-bounce">
+              <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>
             </div>
-          </div>
-        )}
-
-        {showMilestoneToast && (
-          <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[5001] bg-emerald-500 text-white px-6 py-3 rounded-2xl shadow-xl flex items-center gap-3 animate-in slide-in-from-top-4">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
-            <span className="font-black text-sm uppercase tracking-wider">2 Min Reached!</span>
-          </div>
-        )}
-
-        <div className={`
-          fixed md:relative z-[2000] h-full w-[85%] md:w-96 
-          bg-white/95 md:bg-white backdrop-blur-xl md:backdrop-blur-none
-          border-r border-slate-200 p-6 flex flex-col gap-6 shadow-2xl md:shadow-none 
-          transition-transform duration-300 ease-in-out
-          ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full md:-translate-x-80'}
-        `}>
-          <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="absolute top-1/2 -translate-y-1/2 -right-8 w-8 h-20 bg-white border border-slate-200 border-l-0 rounded-r-2xl flex items-center justify-center shadow-lg text-slate-400 hover:text-blue-500 z-[2001]">
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className={`transition-transform duration-300 ${isSidebarOpen ? 'rotate-0' : 'rotate-180'}`}><polyline points="15 18 9 12 15 6"></polyline></svg>
-          </button>
-
-          <section className="overflow-y-auto custom-scrollbar pr-2 flex-1">
-            <div className="mb-6 p-5 rounded-[2rem] bg-amber-50 border border-amber-100 shadow-sm relative overflow-hidden group">
-              <div className="absolute -top-4 -right-4 w-20 h-20 bg-amber-200/20 rounded-full group-hover:scale-150 transition-transform duration-700"></div>
-              
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-4">
-                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-sm ${tracking.isCurrentlyInSun ? 'bg-amber-400 text-white animate-pulse' : 'bg-slate-200 text-slate-400'}`}>
-                    {tracking.isCurrentlyInSun ? (
-                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
-                    ) : (
-                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
-                    )}
-                  </div>
-                  <div>
-                    <h3 className="text-[10px] font-black uppercase text-amber-700 tracking-widest leading-none mb-1">Sun Exposure</h3>
-                    <p className="text-xl font-black text-slate-800 leading-none">{sunnyMinutes}m {sunnyRemainingSeconds}s</p>
-                  </div>
-                </div>
-
-                <button 
-                  onClick={toggleWakeLock}
-                  title={isWakeLocked ? "Background Tracking Active" : "Allow Sleep"}
-                  className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${isWakeLocked ? 'bg-amber-500 text-white shadow-lg' : 'bg-slate-100 text-slate-400'}`}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className={isWakeLocked ? "animate-pulse" : ""}><path d="M12 2v4"/><path d="M12 18v4"/><path d="M4.93 4.93l2.83 2.83"/><path d="M16.24 16.24l2.83 2.83"/><path d="M2 12h4"/><path d="M18 12h4"/><path d="M4.93 19.07l2.83-2.83"/><path d="M16.24 7.76l2.83-2.83"/></svg>
-                </button>
-              </div>
-              
-              <div className="w-full h-3 bg-slate-200 rounded-full relative overflow-hidden mb-2">
-                <div 
-                  className="absolute top-0 bottom-0 w-0.5 bg-white/60 z-10" 
-                  style={{ left: `${(SUN_MILESTONE_MINUTES / SUN_GOAL_MINUTES) * 100}%` }}
-                ></div>
-                <div 
-                  className={`h-full transition-all duration-1000 ${tracking.hasAchievedMilestone ? 'bg-emerald-400' : 'bg-amber-400'}`} 
-                  style={{ width: `${Math.min(100, (tracking.totalSeconds / (SUN_GOAL_MINUTES * 60)) * 100)}%` }}
-                ></div>
-              </div>
-              <div className="flex justify-between items-center text-[9px] font-black uppercase">
-                <span className={`${tracking.hasAchievedMilestone ? 'text-emerald-600' : 'text-slate-400'}`}>Min: 2m</span>
-                <span className="text-slate-400">Trail: {tracking.walkedTrail.length} pts</span>
-                <span className="text-slate-400">Goal: 10m</span>
-              </div>
-              {isWakeLocked && (
-                <p className="text-[8px] font-bold text-amber-600 mt-2 text-center animate-pulse uppercase">Background Persistence Active</p>
-              )}
-            </div>
-
-            <div className="flex bg-slate-100 p-1.5 rounded-2xl mb-6 shadow-inner">
-               <button onClick={() => setMode(AppMode.WALK)} className={`flex-1 py-3 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 ${mode === AppMode.WALK ? 'bg-white text-amber-600 shadow-md scale-100' : 'text-slate-500 opacity-60'}`}>Walk</button>
-               <button onClick={() => setMode(AppMode.SIT)} className={`flex-1 py-3 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 ${mode === AppMode.SIT ? 'bg-white text-amber-600 shadow-md scale-100' : 'text-slate-500 opacity-60'}`}>Sit</button>
-            </div>
-
-            <div className={`mb-4 p-4 rounded-2xl border transition-all ${isSimulating ? 'bg-indigo-50 border-indigo-200 ring-2 ring-indigo-500/20' : 'bg-slate-50 border-slate-100'}`}>
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <div className={`w-2 h-2 rounded-full ${isSimulating ? 'bg-indigo-500 animate-pulse' : 'bg-slate-300'}`}></div>
-                  <span className="text-xs font-black uppercase tracking-tight text-slate-700">Simulation</span>
-                </div>
-                <button onClick={() => setIsSimulating(!isSimulating)} className={`relative inline-flex h-5 w-10 items-center rounded-full transition-colors ${isSimulating ? 'bg-indigo-600' : 'bg-slate-300'}`}><span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${isSimulating ? 'translate-x-6' : 'translate-x-1'}`} /></button>
-              </div>
-              {isSimulating && (
-                <input type="time" value={simulatedTimeStr} onChange={(e) => setSimulatedTimeStr(e.target.value)} className="w-full bg-white border border-indigo-200 rounded-lg px-3 py-2 text-sm font-bold text-indigo-900 outline-none" />
-              )}
-            </div>
-
-            <div className="space-y-4">
-              {mode === AppMode.WALK && (
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-2 flex justify-between">
-                    <span>Walking Duration</span>
-                    <span className="text-amber-600 font-bold">{duration} min</span>
-                  </label>
-                  <input type="range" min="10" max="120" step="5" value={duration} onChange={(e) => setDuration(parseInt(e.target.value))} disabled={isBlocked || !userLocation} className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-amber-500 disabled:opacity-30" />
-                </div>
-              )}
-
-              <button disabled={isBlocked || !userLocation} onClick={handleAction} className={`w-full py-4 px-6 text-white font-bold rounded-2xl shadow-xl transition-all active:scale-95 flex items-center justify-center gap-2 ${!userLocation ? 'bg-slate-300 cursor-not-allowed' : isSimulating ? 'bg-indigo-600' : 'sunny-gradient'} disabled:opacity-50`}>
-                {status === AppStatus.GENERATING ? 'Scouting Sunshine...' : mode === AppMode.WALK ? 'Generate Sunny Loop' : 'Find Sunny Benches'}
-              </button>
-            </div>
-            {error && (
-              <div className="mt-4 p-4 rounded-2xl bg-rose-50 border border-rose-100 text-rose-600 text-[11px] font-bold leading-relaxed flex gap-2">
-                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                 {error}
-              </div>
-            )}
-          </section>
-
-          <div className="mt-auto pt-6 border-t border-slate-100 flex items-center justify-between text-slate-400">
-             <div className="flex items-center gap-3">
-                <div className={`w-2.5 h-2.5 rounded-full ${locationSource === 'gps' ? 'bg-green-500 animate-pulse' : 'bg-slate-300'}`}></div>
-                <span className="text-[10px] font-black uppercase text-slate-500">{locationSource === 'gps' ? 'GPS Active' : 'Manual'}</span>
-             </div>
-             <button onClick={() => { if (locationSource === 'gps') setIsTracking(!isTracking); else locateUser(); }} className={`text-[10px] font-black uppercase px-2 py-1 rounded-md ${isTracking ? 'text-blue-600 bg-blue-50' : 'text-slate-500 bg-slate-100'}`}>{isTracking ? 'Following' : 'Follow'}</button>
+            <h2 className="text-2xl font-black text-slate-900 mb-2">Sun Master!</h2>
+            <p className="text-slate-500 font-medium mb-8">Congrats! You've soaked up <span className="text-amber-600 font-bold">{SUN_GOAL_MINUTES} minutes</span>.</p>
+            <button onClick={() => setShowCongrats(false)} className="w-full sunny-gradient py-4 rounded-2xl text-white font-black">Keep Glowing</button>
           </div>
         </div>
+      )}
 
-        <div className="flex-1 relative h-full">
-          <MapDisplay 
-            userLocation={userLocation} 
+      {showMilestoneToast && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[5001] bg-emerald-500 text-white px-6 py-3 rounded-2xl shadow-xl flex items-center gap-3 animate-in slide-in-from-top-4">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
+          <span className="font-black text-sm uppercase tracking-wider">2 Min Reached!</span>
+        </div>
+      )}
+
+      <main className="relative z-10 flex h-full w-full flex-col items-center justify-between overflow-visible px-8 pb-8 pt-7">
+        <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_50%_25%,rgba(255,255,255,0.55),transparent_32rem)]" />
+
+        <button
+          type="button"
+          onClick={() => setShowDurationPanel((value) => !value)}
+          className="absolute left-5 top-6 z-20 flex h-11 w-11 items-center justify-center rounded-full border-2 border-black bg-transparent transition-transform active:scale-95"
+          aria-label="Set walking duration"
+        >
+          <span className="text-xl leading-none">☺</span>
+        </button>
+
+        {showDurationPanel && (
+          <div className="absolute left-5 top-20 z-30 w-72 rounded-[2rem] border border-black bg-[#f3f1ec] p-5 shadow-xl">
+            <div className="mb-4 flex items-center justify-between">
+              <span className="font-nyght-light-italic text-lg">walk length</span>
+              <span className="text-sm font-semibold">{duration} min</span>
+            </div>
+            <input
+              type="range"
+              min="10"
+              max="120"
+              step="5"
+              value={duration}
+              onChange={(e) => setDuration(parseInt(e.target.value))}
+              className="w-full accent-black"
+            />
+          </div>
+        )}
+
+        <div className="absolute right-5 top-8 z-20 flex items-center gap-2 text-sm font-medium">
+          <span>{weatherLabel}</span>
+          <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="4" />
+            <path d="M12 2v2" />
+            <path d="M12 20v2" />
+            <path d="m4.93 4.93 1.41 1.41" />
+            <path d="m17.66 17.66 1.41 1.41" />
+            <path d="M2 12h2" />
+            <path d="M20 12h2" />
+            <path d="m6.34 17.66-1.41 1.41" />
+            <path d="m19.07 4.93-1.41 1.41" />
+          </svg>
+        </div>
+
+        <section className="relative z-10 flex h-full w-full max-w-[430px] flex-col items-center justify-between overflow-visible">
+          <div className="mt-20 w-full text-center">
+            <h1 className="tracking-[-0.12em] text-[6.8rem] leading-[0.58] sm:text-[7.7rem]">
+              <span className="font-nyght-light-italic block">enjoy</span>
+              <span className="font-fixel-light block tracking-[-0.16em] text-[5.9rem] sm:text-[6.7rem]">sun</span>
+            </h1>
+          </div>
+
+          <div className="relative z-20 -mt-4 flex w-full min-h-[265px] flex-1 items-center justify-center overflow-visible">
+            <FlowerMascot
+              condition={mascotCondition}
+              className="h-[39.7vh] min-h-[265px] w-full max-w-[340px] origin-center scale-[1.89] -translate-y-[70px]"
+            />
+          </div>
+
+          <div className="mt-4 w-full max-w-[285px]">
+            <div className="flex min-h-[4.375rem] flex-col space-y-1.5">
+              {showActionButtons && (
+                <>
+                  <button
+                    ref={walkBtnRef}
+                    type="button"
+                    disabled={!userLocation || buttonsExiting}
+                    onClick={() => handleActionWithExit(AppMode.WALK)}
+                    className={`font-nyght-regular flex h-8 w-full items-center justify-between rounded-full border border-black bg-transparent px-6 text-base leading-none disabled:cursor-not-allowed disabled:opacity-40 ${
+                      buttonsExiting
+                        ? exitLeadButton === 'walk'
+                          ? 'animate-action-button-exit'
+                          : 'animate-action-button-exit-delayed'
+                        : 'animate-slide-up-fade-in transition-all hover:bg-black hover:text-white active:scale-[0.98]'
+                    }`}
+                  >
+                    <span>take a walk</span>
+                    <span aria-hidden="true">→</span>
+                  </button>
+                  <button
+                    ref={sitBtnRef}
+                    type="button"
+                    disabled={!userLocation || buttonsExiting}
+                    onClick={() => handleActionWithExit(AppMode.SIT)}
+                    className={`font-nyght-regular flex h-8 w-full items-center justify-between rounded-full border border-black bg-transparent px-6 text-base leading-none disabled:cursor-not-allowed disabled:opacity-40 ${
+                      buttonsExiting
+                        ? exitLeadButton === 'sit'
+                          ? 'animate-action-button-exit'
+                          : 'animate-action-button-exit-delayed'
+                        : 'animate-slide-up-fade-in-delayed transition-all hover:bg-black hover:text-white active:scale-[0.98]'
+                    }`}
+                  >
+                    <span>sit in the sun</span>
+                    <span aria-hidden="true">→</span>
+                  </button>
+                </>
+              )}
+            </div>
+            {SHOW_SUN_TIME_LABEL && (
+              <p className="pt-1 text-center text-[11px] font-medium text-black/55">
+                {locationSource === 'waiting'
+                  ? 'finding your location...'
+                  : `${sunnyMinutes}m ${sunnyRemainingSeconds}s in sun today`}
+              </p>
+            )}
+            {error && (
+              <p className="rounded-2xl border border-black/20 bg-white/40 px-4 py-3 text-center text-xs font-semibold text-rose-700">
+                {error}
+              </p>
+            )}
+          </div>
+        </section>
+      </main>
+
+      {!isMapOpen && !isMapClosing && (
+        <button
+          type="button"
+          onClick={openMap}
+          aria-label="Open map"
+          className="fixed right-0 top-1/2 z-[55] flex h-12 w-6 -translate-y-1/2 items-center justify-center rounded-l-full border border-r-0 border-black bg-[#f3f1ec] shadow-md active:scale-95"
+        />
+      )}
+
+      <div
+        onTransitionEnd={handleMapPanelTransitionEnd}
+        className={`map-slide-panel fixed inset-0 z-50 bg-slate-100 ${
+          mapSlideReady ? 'transition-transform duration-[2000ms] ease-out' : ''
+        } ${isMapOpen ? 'translate-x-0' : 'translate-x-full'} ${
+          !isMapOpen && !isMapClosing ? 'pointer-events-none' : ''
+        }`}
+      >
+        <div className={isMapOpen ? 'h-full w-full' : 'pointer-events-none h-full w-full'}>
+          <MapDisplay
+            userLocation={userLocation}
             locationSource={locationSource}
             locationAccuracy={locationAccuracy}
             isTracking={isTracking}
             isPinningMode={isPinningMode}
+            showAllScouts={showAllScouts}
             onUserLocationChange={handleManualLocationChange}
             onLocateMe={locateUser}
             onToggleTracking={setIsTracking}
-            path={generatedPath} 
+            onSelectScout={handleSelectScout}
+            path={generatedPath}
             walkedTrail={tracking.walkedTrail}
-            benches={foundBenches || undefined}
+            benches={foundBenches ?? undefined}
             mode={mode}
-            showAllScouts={showAllScouts}
-            onSelectScout={(s) => setGeneratedPath(prev => prev ? { ...s, allScouts: prev.allScouts } : null)}
-            displayDate={effectiveTime}
+            displayDate={isSimulating ? effectiveTime : undefined}
             isCurrentlySunny={tracking.isCurrentlyInSun}
+            onNewPath={handleNewPath}
+            onStartWalk={handleStartWalk}
+            canCyclePath={(generatedPath?.allScouts?.length ?? 0) > 1}
           />
         </div>
-      </main>
+
+        {showMapCircleControl && (
+          <div
+            className={`pointer-events-auto absolute left-0 top-1/2 z-[1001] -translate-y-1/2 ${mapCircleTransformClass}`}
+            aria-expanded={isMapOpen}
+          >
+            {showSettledBackButton ? (
+              <button
+                type="button"
+                onClick={closeMap}
+                aria-label="Back to main menu"
+                className="flex h-12 w-6 items-center justify-center rounded-r-full border border-l-0 border-black bg-[#f3f1ec] shadow-md active:scale-95"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M19 12H5" />
+                  <path d="m12 19-7-7 7-7" />
+                </svg>
+              </button>
+            ) : (
+              <div className="flex h-12 w-12 overflow-hidden rounded-full border border-black bg-[#f3f1ec] shadow-md">
+                <div
+                  className="flex h-12 w-6 items-center justify-center bg-[#f3f1ec]"
+                  aria-hidden
+                />
+                <button
+                  type="button"
+                  onClick={closeMap}
+                  aria-label="Back to main menu"
+                  className="flex h-12 w-6 items-center justify-center bg-[#f3f1ec] active:scale-95"
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M19 12H5" />
+                    <path d="m12 19-7-7 7-7" />
+                  </svg>
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 };

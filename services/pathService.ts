@@ -137,3 +137,14 @@ export const findOptimalSunnyPath = async (
 
   return { ...bestCandidate, sunScore: finalSunScore, allScouts: scouts };
 };
+
+export const pickNextScoutPath = (current: PathResult): PathResult | null => {
+  const scouts = current.allScouts;
+  if (!scouts?.length) return null;
+  if (scouts.length === 1) {
+    return { ...scouts[0], allScouts: scouts };
+  }
+  const currentIndex = scouts.findIndex((s) => s.id === current.id);
+  const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % scouts.length : 0;
+  return { ...scouts[nextIndex], allScouts: scouts };
+};
