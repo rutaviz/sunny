@@ -55,7 +55,9 @@ const App: React.FC = () => {
 
   // Mobile UI States
   const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth > 768);
-  const [isTracking, setIsTracking] = useState(true); 
+  const [isTracking, setIsTracking] = useState(true);
+  const [isMobileViewport, setIsMobileViewport] = useState(window.innerWidth < 768);
+  const [mobileButtonLiftPx, setMobileButtonLiftPx] = useState(12);
   
   const watchIdRef = useRef<number | null>(null);
   const locationAttemptsRef = useRef<number>(0);
@@ -73,6 +75,7 @@ const App: React.FC = () => {
   const walkBtnRef = useRef<HTMLButtonElement>(null);
   const sitBtnRef = useRef<HTMLButtonElement>(null);
   const buttonsExitTimerRef = useRef<number | null>(null);
+  const mascotContainerRef = useRef<HTMLDivElement>(null);
 
   const resetButtonExitState = useCallback(() => {
     if (buttonsExitTimerRef.current !== null) {
@@ -122,6 +125,38 @@ const App: React.FC = () => {
       clearInterval(timer);
       clearTimeout(loadingTimer);
     };
+  }, []);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobileViewport(window.innerWidth < 768);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  useEffect(() => {
+    const target = mascotContainerRef.current;
+    if (!target) return;
+
+    const updateLift = () => {
+      const height = target.getBoundingClientRect().height;
+      if (height > 0) {
+        // Keep button overlap around 5% of mascot area on mobile.
+        setMobileButtonLiftPx(Math.round(height * 0.05));
+      }
+    };
+
+    updateLift();
+
+    if (typeof ResizeObserver !== 'undefined') {
+      const observer = new ResizeObserver(updateLift);
+      observer.observe(target);
+      return () => observer.disconnect();
+    }
+
+    window.addEventListener('resize', updateLift);
+    return () => window.removeEventListener('resize', updateLift);
   }, []);
 
   // SILENT AUDIO ENGINE: Keeps process alive when screen is locked
@@ -548,14 +583,17 @@ const App: React.FC = () => {
             </h1>
           </div>
 
-          <div className="relative z-20 -mt-4 flex w-full min-h-[238px] flex-1 items-center justify-center overflow-visible md:min-h-[265px]">
+          <div ref={mascotContainerRef} className="relative z-20 -mt-4 flex w-full min-h-[238px] flex-1 items-center justify-center overflow-visible md:min-h-[265px]">
             <FlowerMascot
               condition={mascotCondition}
               className="h-[35.7vh] min-h-[238px] w-full max-w-[306px] origin-center scale-[1.7] -translate-y-[60px] md:h-[39.7vh] md:min-h-[265px] md:max-w-[340px] md:scale-[1.89] md:-translate-y-[70px]"
             />
           </div>
 
-          <div className="mt-4 w-full max-w-[285px] max-md:mt-1 max-md:-translate-y-8 max-md:pb-2">
+          <div
+            className="mt-4 w-full max-w-[285px] max-md:mt-1 max-md:pb-2"
+            style={isMobileViewport ? { transform: `translateY(-${mobileButtonLiftPx}px)` } : undefined}
+          >
             <div className="flex min-h-[4.375rem] flex-col space-y-1.5">
               {showActionButtons && (
                 <>
