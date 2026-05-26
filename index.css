@@ -59,6 +59,13 @@
   width: 100vw;
 }
 
+@media (max-width: 767px) {
+  #root {
+    height: 100dvh;
+    min-height: 100dvh;
+  }
+}
+
 .custom-marker {
   background: none;
   border: none;

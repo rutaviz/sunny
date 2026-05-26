@@ -472,7 +472,7 @@ const App: React.FC = () => {
     : '-translate-x-1/2';
 
   return (
-    <div className="h-screen max-h-screen relative overflow-x-hidden overflow-y-visible bg-[#e7e5e0] text-[#101010]">
+    <div className="relative h-screen max-h-screen overflow-x-hidden overflow-y-visible bg-[#e7e5e0] text-[#101010] max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:min-h-[100dvh]">
       {isBlocked && <LoadingScreen message={loadingMessage || 'Loading...'} />}
 
       {showCongrats && (
@@ -495,7 +495,7 @@ const App: React.FC = () => {
         </div>
       )}
 
-      <main className="relative z-10 flex h-full w-full flex-col items-center justify-between overflow-visible px-8 pb-8 pt-7">
+      <main className="relative z-10 flex h-full w-full flex-col items-center justify-between overflow-visible px-8 pb-8 pt-7 max-md:px-6 max-md:pb-[calc(1.75rem+env(safe-area-inset-bottom,0px))]">
         <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_50%_25%,rgba(255,255,255,0.55),transparent_32rem)]" />
 
         <button
@@ -548,14 +548,14 @@ const App: React.FC = () => {
             </h1>
           </div>
 
-          <div className="relative z-20 -mt-4 flex w-full min-h-[265px] flex-1 items-center justify-center overflow-visible">
+          <div className="relative z-20 -mt-4 flex w-full min-h-[238px] flex-1 items-center justify-center overflow-visible md:min-h-[265px]">
             <FlowerMascot
               condition={mascotCondition}
-              className="h-[39.7vh] min-h-[265px] w-full max-w-[340px] origin-center scale-[1.89] -translate-y-[70px]"
+              className="h-[35.7vh] min-h-[238px] w-full max-w-[306px] origin-center scale-[1.7] -translate-y-[60px] md:h-[39.7vh] md:min-h-[265px] md:max-w-[340px] md:scale-[1.89] md:-translate-y-[70px]"
             />
           </div>
 
-          <div className="mt-4 w-full max-w-[285px]">
+          <div className="mt-4 w-full max-w-[285px] max-md:mt-1 max-md:-translate-y-8 max-md:pb-2">
             <div className="flex min-h-[4.375rem] flex-col space-y-1.5">
               {showActionButtons && (
                 <>
