@@ -160,3 +160,57 @@
 .map-slide-panel .leaflet-container {
   border-radius: 0;
 }
+
+.home-mascot-stack {
+  gap: calc(clamp(0.5rem, 2vh, 1rem) + 30px);
+}
+
+.cafe-popup-wrapper .leaflet-popup-content-wrapper {
+  border-radius: 1rem;
+  padding: 0;
+}
+
+.cafe-popup-wrapper .leaflet-popup-content {
+  margin: 0;
+}
+
+.cafe-popup {
+  padding: 0.875rem 1rem;
+  min-width: 12rem;
+  color: #1a2d4a;
+  font-family: 'Nyght Serif', serif;
+}
+
+.cafe-popup-name {
+  margin: 0 0 0.35rem;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.cafe-popup-meta,
+.cafe-popup-sun {
+  margin: 0 0 0.35rem;
+  font-size: 0.8125rem;
+  line-height: 1.3;
+  color: #475569;
+}
+
+.cafe-popup-sun {
+  margin-bottom: 0.75rem;
+  color: #b45309;
+}
+
+.cafe-popup-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  border-radius: 9999px;
+  background: #a5dff5;
+  color: #322f68;
+  font-size: 0.8125rem;
+  font-style: italic;
+  text-decoration: none;
+  padding: 0.45rem 0.75rem;
+}

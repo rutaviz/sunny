@@ -1,7 +1,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { Coordinate, PathResult, BenchResult, AppMode } from '../types';
+import { Coordinate, PathResult, BenchResult, CafeResult, AppMode } from '../types';
 import { SHADEMAP_API_KEY } from '../constants';
 import { calculateSunScore, getBuildingsForArea } from '../services/shadeService';
 import MapUserIcon from './MapUserIcon';
@@ -12,6 +12,8 @@ const USER_MARKER_SIZE_PX = 80;
 const MAP_FIT_AFTER_SLIDE_MS = 2050;
 const PATH_PANEL_SIDE_PAD = 48;
 const PATH_PANEL_BOTTOM_PAD = 180;
+const SHADOW_REFRESH_MIN_DISTANCE_DEG = 0.0025;
+const SHADOW_REFRESH_MIN_INTERVAL_MS = 3500;
 
 const PATH_DOT_RADIUS_PX = 7;
 /** Center-to-center: diameter + gap (gap = one circle width) */
@@ -107,6 +109,7 @@ interface MapDisplayProps {
   path: PathResult | null;
   walkedTrail?: Coordinate[];
   benches?: BenchResult[];
+  cafes?: CafeResult[];
   mode: AppMode;
   displayDate?: Date;
   isCurrentlySunny?: boolean;
@@ -117,6 +120,40 @@ interface MapDisplayProps {
 
 const formatPathDistance = (km: number) =>
   km >= 1 ? `${km.toFixed(1)} km` : `${Math.round(km * 1000)} m`;
+
+const CAFE_SUN_FORECAST_MAX_MIN = 8 * 60;
+
+const escapeHtml = (value: string) =>
+  value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+
+const formatSunnyDuration = (minutes: number, isSunny: boolean) => {
+  if (!isSunny) return 'Not in sun right now';
+  if (minutes <= 0) return 'Sunny now (briefly)';
+  if (minutes >= CAFE_SUN_FORECAST_MAX_MIN) return 'Sunny for 8+ hours';
+  if (minutes < 60) return `Sunny for ~${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  return mins > 0 ? `Sunny for ~${hours}h ${mins}m` : `Sunny for ~${hours}h`;
+};
+
+const buildCafePopupHtml = (cafe: CafeResult) => {
+  const { lat, lng } = cafe.coordinate;
+  const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+  const sunnyLabel = formatSunnyDuration(cafe.sunnyMinutesRemaining, cafe.isSunny);
+
+  return `
+    <div class="cafe-popup">
+      <p class="cafe-popup-name">${escapeHtml(cafe.name || 'Outdoor spot')}</p>
+      <p class="cafe-popup-meta">${Math.round(cafe.distanceMeters)} m away · ${Math.round(cafe.sunScore)}% sun</p>
+      <p class="cafe-popup-sun">${sunnyLabel}</p>
+      <a class="cafe-popup-link" href="${mapsUrl}" target="_blank" rel="noopener noreferrer">Show on Google Maps</a>
+    </div>
+  `;
+};
 
 type ShadowStatus = 'loading' | 'active' | 'error' | 'low-zoom';
 
@@ -134,6 +171,7 @@ const MapDisplay: React.FC<MapDisplayProps> = ({
   path, 
   walkedTrail = [],
   benches,
+  cafes,
   mode,
   displayDate,
   isCurrentlySunny,
@@ -147,6 +185,7 @@ const MapDisplay: React.FC<MapDisplayProps> = ({
   const trailLayerRef = useRef<any>(null);
   const scoutLayersRef = useRef<any[]>([]);
   const benchMarkersRef = useRef<any[]>([]);
+  const cafeMarkersRef = useRef<any[]>([]);
   const guessedMarkersRef = useRef<any[]>([]);
   const markerRef = useRef<any>(null);
   const markerRootRef = useRef<Root | null>(null);
@@ -161,6 +200,13 @@ const MapDisplay: React.FC<MapDisplayProps> = ({
   const [shadowStatus, setShadowStatus] = useState<ShadowStatus>('loading');
   const [currentBuildings, setCurrentBuildings] = useState<any[]>([]);
   const [lockedScore, setLockedScore] = useState<number | null>(null);
+  const shadowBuildingsRef = useRef<any[]>([]);
+  const shadowFetchMetaRef = useRef<{ center: Coordinate; fetchedAt: number } | null>(null);
+  const shadowFetchPromiseRef = useRef<Promise<any[]> | null>(null);
+
+  useEffect(() => {
+    shadowBuildingsRef.current = currentBuildings;
+  }, [currentBuildings]);
 
   const pinningModeRef = useRef(isPinningMode);
   useEffect(() => {
@@ -177,7 +223,13 @@ const MapDisplay: React.FC<MapDisplayProps> = ({
     }
   };
 
-  const createUserMarkerIcon = () => {
+  const renderUserMarkerRive = (inSun: boolean) => {
+    markerRootRef.current?.render(
+      <MapUserIcon className="h-full w-full" inSun={inSun} />
+    );
+  };
+
+  const createUserMarkerIcon = (inSun: boolean) => {
     const host = document.createElement('div');
     host.className = 'relative flex h-20 w-20 items-center justify-center overflow-visible';
 
@@ -185,14 +237,8 @@ const MapDisplay: React.FC<MapDisplayProps> = ({
     riveMount.className = 'h-20 w-20';
     host.appendChild(riveMount);
 
-    const indicator = document.createElement('div');
-    indicator.className =
-      'user-sun-indicator pointer-events-none absolute right-0 top-0 flex h-5 w-5 scale-0 items-center justify-center rounded-full bg-amber-400 text-[10px] transition-transform';
-    indicator.textContent = '☀️';
-    host.appendChild(indicator);
-
     const root = createRoot(riveMount);
-    root.render(<MapUserIcon className="h-full w-full" />);
+    root.render(<MapUserIcon className="h-full w-full" inSun={inSun} />);
     markerRootRef.current = root;
 
     return L.divIcon({
@@ -271,12 +317,50 @@ const MapDisplay: React.FC<MapDisplayProps> = ({
           getElevation: ({ r, g, b }: any) => (r * 256 + g + b / 256) - 32768
         },
         getFeatures: async () => {
-          if (map.getZoom() < 15) { setShadowStatus('low-zoom'); return []; }
-          setShadowStatus('loading');
-          const buildings = await getBuildingsForArea(map.getCenter());
-          setShadowStatus(buildings.length > 0 ? 'active' : 'error');
-          setCurrentBuildings(buildings);
-          return buildings;
+          const zoom = map.getZoom();
+          if (zoom < 15) {
+            setShadowStatus('low-zoom');
+            // Keep already-rendered shadows visible instead of clearing.
+            return shadowBuildingsRef.current;
+          }
+
+          const center = map.getCenter();
+          const centerCoord: Coordinate = { lat: center.lat, lng: center.lng };
+          const meta = shadowFetchMetaRef.current;
+          const hasCached = shadowBuildingsRef.current.length > 0;
+
+          if (hasCached && meta) {
+            const dist = Math.hypot(centerCoord.lat - meta.center.lat, centerCoord.lng - meta.center.lng);
+            const age = Date.now() - meta.fetchedAt;
+            if (dist < SHADOW_REFRESH_MIN_DISTANCE_DEG || age < SHADOW_REFRESH_MIN_INTERVAL_MS) {
+              setShadowStatus('active');
+              return shadowBuildingsRef.current;
+            }
+          }
+
+          if (shadowFetchPromiseRef.current) {
+            // Reuse in-flight fetch and avoid flicker.
+            return hasCached ? shadowBuildingsRef.current : await shadowFetchPromiseRef.current;
+          }
+
+          if (!hasCached) {
+            setShadowStatus('loading');
+          } else {
+            setShadowStatus('active');
+          }
+
+          shadowFetchPromiseRef.current = (async () => {
+            const buildings = await getBuildingsForArea(centerCoord);
+            shadowFetchMetaRef.current = { center: centerCoord, fetchedAt: Date.now() };
+            shadowBuildingsRef.current = buildings;
+            setCurrentBuildings(buildings);
+            setShadowStatus(buildings.length > 0 ? 'active' : 'error');
+            return buildings;
+          })().finally(() => {
+            shadowFetchPromiseRef.current = null;
+          });
+
+          return hasCached ? shadowBuildingsRef.current : await shadowFetchPromiseRef.current;
         }
       });
       sm.addTo(map);
@@ -334,16 +418,11 @@ const MapDisplay: React.FC<MapDisplayProps> = ({
     if (!mapRef.current || !userLocation) return;
     const latlng = [userLocation.lat, userLocation.lng];
     if (!markerRef.current) {
-      const avatarIcon = createUserMarkerIcon();
+      const avatarIcon = createUserMarkerIcon(!!isCurrentlySunny);
       markerRef.current = L.marker(latlng, { icon: avatarIcon, zIndexOffset: 1000 }).addTo(mapRef.current);
     } else {
       markerRef.current.setLatLng(latlng);
-    }
-
-    const indicator = markerRef.current._icon?.querySelector('.user-sun-indicator');
-    if (indicator) {
-      indicator.classList.toggle('scale-100', !!isCurrentlySunny);
-      indicator.classList.toggle('scale-0', !isCurrentlySunny);
+      renderUserMarkerRive(!!isCurrentlySunny);
     }
 
     if (isTracking || !initialCenterSet.current) {
@@ -397,6 +476,30 @@ const MapDisplay: React.FC<MapDisplayProps> = ({
       benchMarkersRef.current.push(L.marker([bench.coordinate.lat, bench.coordinate.lng], { icon }).addTo(mapRef.current));
     });
   }, [benches, mode]);
+
+  useEffect(() => {
+    if (!mapRef.current) return;
+    cafeMarkersRef.current.forEach((m) => m.remove());
+    cafeMarkersRef.current = [];
+    if (!cafes || mode !== AppMode.CAFE) return;
+
+    cafes.forEach((cafe) => {
+      const icon = L.divIcon({
+        className: 'cafe-marker',
+        html: `<div class="w-8 h-8 rounded-full shadow-lg border-2 border-white flex items-center justify-center ${cafe.isSunny ? 'bg-amber-500' : 'bg-slate-500'}"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><path d="M3 8h13v8H3z"/><path d="M16 10h2a2 2 0 0 1 0 4h-2"/><path d="M6 16v2"/><path d="M10 16v2"/></svg></div>`,
+        iconSize: [40, 40],
+        iconAnchor: [20, 20]
+      });
+      const marker = L.marker([cafe.coordinate.lat, cafe.coordinate.lng], { icon })
+        .bindPopup(buildCafePopupHtml(cafe), {
+          className: 'cafe-popup-wrapper',
+          maxWidth: 260,
+          closeButton: true
+        })
+        .addTo(mapRef.current);
+      cafeMarkersRef.current.push(marker);
+    });
+  }, [cafes, mode]);
 
   useEffect(() => {
     if (!path || mode !== AppMode.WALK) {

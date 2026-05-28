@@ -21,6 +21,16 @@ export interface BenchResult {
   distanceMeters: number;
 }
 
+export interface CafeResult {
+  id: string;
+  coordinate: Coordinate;
+  isSunny: boolean;
+  sunScore: number;
+  sunnyMinutesRemaining: number;
+  name?: string;
+  distanceMeters: number;
+}
+
 export interface WeatherInfo {
   condition: 'clear' | 'cloudy' | 'rainy' | 'night';
   description: string;
@@ -40,7 +50,8 @@ export enum AppStatus {
 
 export enum AppMode {
   WALK = 'WALK',
-  SIT = 'SIT'
+  SIT = 'SIT',
+  CAFE = 'CAFE'
 }
 
 export interface SunTrackingState {

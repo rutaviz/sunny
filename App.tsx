@@ -3,9 +3,10 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import FlowerMascot from './components/FlowerMascot';
 import LoadingScreen from './components/LoadingScreen';
 import MapDisplay from './components/MapDisplay';
-import { Coordinate, PathResult, BenchResult, AppStatus, WeatherInfo, AppMode, SunTrackingState } from './types';
+import { Coordinate, PathResult, BenchResult, CafeResult, AppStatus, WeatherInfo, AppMode, SunTrackingState } from './types';
 import { findOptimalSunnyPath, pickNextScoutPath } from './services/pathService';
 import { findSunnyBenches } from './services/benchService';
+import { findSunnyCafes } from './services/cafeService';
 import { fetchSunlightOutlook } from './services/weatherService';
 import { calculateSunScore } from './services/shadeService';
 
@@ -24,6 +25,7 @@ const App: React.FC = () => {
   const [duration, setDuration] = useState<number>(30);
   const [generatedPath, setGeneratedPath] = useState<PathResult | null>(null);
   const [foundBenches, setFoundBenches] = useState<BenchResult[] | null>(null);
+  const [foundCafes, setFoundCafes] = useState<CafeResult[] | null>(null);
   const [showAllScouts, setShowAllScouts] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
@@ -39,7 +41,7 @@ const App: React.FC = () => {
   const [mapSlideReady, setMapSlideReady] = useState(false);
   const [buttonsExiting, setButtonsExiting] = useState(false);
   const [buttonsExitComplete, setButtonsExitComplete] = useState(false);
-  const [exitLeadButton, setExitLeadButton] = useState<'walk' | 'sit' | null>(null);
+  const [exitLeadButton, setExitLeadButton] = useState<'walk' | 'sit' | 'cafe' | null>(null);
 
   // Exposure Tracking State
   const [tracking, setTracking] = useState<SunTrackingState>({
@@ -56,9 +58,6 @@ const App: React.FC = () => {
   // Mobile UI States
   const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth > 768);
   const [isTracking, setIsTracking] = useState(true);
-  const [isMobileViewport, setIsMobileViewport] = useState(window.innerWidth < 768);
-  const [mobileButtonLiftPx, setMobileButtonLiftPx] = useState(12);
-  
   const watchIdRef = useRef<number | null>(null);
   const locationAttemptsRef = useRef<number>(0);
   const locationTimeoutRef = useRef<number | null>(null);
@@ -74,9 +73,8 @@ const App: React.FC = () => {
   const lastTickTimestampRef = useRef<number>(Date.now());
   const walkBtnRef = useRef<HTMLButtonElement>(null);
   const sitBtnRef = useRef<HTMLButtonElement>(null);
+  const cafeBtnRef = useRef<HTMLButtonElement>(null);
   const buttonsExitTimerRef = useRef<number | null>(null);
-  const mascotContainerRef = useRef<HTMLDivElement>(null);
-
   const resetButtonExitState = useCallback(() => {
     if (buttonsExitTimerRef.current !== null) {
       window.clearTimeout(buttonsExitTimerRef.current);
@@ -101,7 +99,7 @@ const App: React.FC = () => {
 
   // Simulation State
   const [isSimulating, setIsSimulating] = useState(false);
-  const [simulatedTimeStr, setSimulatedTimeStr] = useState("12:00");
+  const [simulatedTimeStr] = useState('14:00');
 
   const effectiveTime = useMemo(() => {
     if (!isSimulating) return currentTime;
@@ -125,38 +123,6 @@ const App: React.FC = () => {
       clearInterval(timer);
       clearTimeout(loadingTimer);
     };
-  }, []);
-
-  useEffect(() => {
-    const handleResize = () => {
-      setIsMobileViewport(window.innerWidth < 768);
-    };
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
-
-  useEffect(() => {
-    const target = mascotContainerRef.current;
-    if (!target) return;
-
-    const updateLift = () => {
-      const height = target.getBoundingClientRect().height;
-      if (height > 0) {
-        // Keep button overlap around 5% of mascot area on mobile.
-        setMobileButtonLiftPx(Math.round(height * 0.05));
-      }
-    };
-
-    updateLift();
-
-    if (typeof ResizeObserver !== 'undefined') {
-      const observer = new ResizeObserver(updateLift);
-      observer.observe(target);
-      return () => observer.disconnect();
-    }
-
-    window.addEventListener('resize', updateLift);
-    return () => window.removeEventListener('resize', updateLift);
   }, []);
 
   // SILENT AUDIO ENGINE: Keeps process alive when screen is locked
@@ -380,11 +346,21 @@ const App: React.FC = () => {
       if (selectedMode === AppMode.WALK) {
         const path = await findOptimalSunnyPath(userLocation, duration, (msg) => setLoadingMessage(msg), isSimulating ? effectiveTime : undefined);
         setGeneratedPath(path);
+        setFoundBenches(null);
+        setFoundCafes(null);
         if (path.sunScore < 30) setShowAllScouts(true);
-      } else {
+      } else if (selectedMode === AppMode.SIT) {
         setLoadingMessage('Searching for benches...');
         const benches = await findSunnyBenches(userLocation, 1000, isSimulating ? effectiveTime : undefined);
         setFoundBenches(benches);
+        setGeneratedPath(null);
+        setFoundCafes(null);
+      } else {
+        setLoadingMessage('Searching for sunny cafes...');
+        const cafes = await findSunnyCafes(userLocation, 1000, isSimulating ? effectiveTime : undefined);
+        setFoundCafes(cafes);
+        setGeneratedPath(null);
+        setFoundBenches(null);
       }
       setStatus(AppStatus.READY);
       setIsMapOpen(true);
@@ -413,14 +389,16 @@ const App: React.FC = () => {
     (selectedMode: AppMode) => {
       if (!userLocation || buttonsExiting) return;
 
-      [walkBtnRef, sitBtnRef].forEach((ref) => {
+      [walkBtnRef, sitBtnRef, cafeBtnRef].forEach((ref) => {
         const el = ref.current;
         if (el) {
           el.style.setProperty('--btn-exit-shift', `-${el.offsetWidth / 3}px`);
         }
       });
 
-      setExitLeadButton(selectedMode === AppMode.WALK ? 'walk' : 'sit');
+      if (selectedMode === AppMode.WALK) setExitLeadButton('walk');
+      else if (selectedMode === AppMode.SIT) setExitLeadButton('sit');
+      else setExitLeadButton('cafe');
       setButtonsExiting(true);
       setButtonsExitComplete(false);
       if (buttonsExitTimerRef.current !== null) {
@@ -557,6 +535,15 @@ const App: React.FC = () => {
               onChange={(e) => setDuration(parseInt(e.target.value))}
               className="w-full accent-black"
             />
+            <label className="mt-4 flex cursor-pointer items-center gap-2 text-sm text-slate-800">
+              <input
+                type="checkbox"
+                checked={isSimulating}
+                onChange={(e) => setIsSimulating(e.target.checked)}
+                className="h-4 w-4 accent-black"
+              />
+              <span>simulate sunlight at 14:00</span>
+            </label>
           </div>
         )}
 
@@ -575,26 +562,24 @@ const App: React.FC = () => {
           </svg>
         </div>
 
-        <section className="relative z-10 flex h-full w-full max-w-[430px] flex-col items-center justify-between overflow-visible">
-          <div className="mt-20 w-full text-center">
+        <section className="relative z-10 flex h-full w-full max-w-[430px] flex-col items-center overflow-visible">
+          <div className="mt-20 w-full shrink-0 text-center">
             <h1 className="tracking-[-0.12em] text-[6.8rem] leading-[0.58] sm:text-[7.7rem]">
               <span className="font-nyght-light-italic block">enjoy</span>
               <span className="font-fixel-light block tracking-[-0.16em] text-[5.9rem] sm:text-[6.7rem]">sun</span>
             </h1>
           </div>
 
-          <div ref={mascotContainerRef} className="relative z-20 -mt-4 flex w-full min-h-[238px] flex-1 items-center justify-center overflow-visible md:min-h-[265px]">
-            <FlowerMascot
-              condition={mascotCondition}
-              className="h-[35.7vh] min-h-[238px] w-full max-w-[306px] origin-center scale-[1.7] -translate-y-[60px] md:h-[39.7vh] md:min-h-[265px] md:max-w-[340px] md:scale-[1.89] md:-translate-y-[70px]"
-            />
-          </div>
+          <div className="home-mascot-stack flex min-h-0 w-full flex-1 flex-col items-center justify-end pb-1">
+            <div className="pointer-events-none z-20 flex w-full shrink-0 items-center justify-center overflow-visible">
+              <FlowerMascot
+                condition={mascotCondition}
+                className="h-[35.7vh] min-h-[238px] w-full max-w-[306px] origin-center scale-[1.7] -translate-y-[55px] md:h-[39.7vh] md:min-h-[265px] md:max-w-[340px] md:scale-[1.89] md:-translate-y-[65px]"
+              />
+            </div>
 
-          <div
-            className="mt-4 w-full max-w-[285px] max-md:mt-1 max-md:pb-2"
-            style={isMobileViewport ? { transform: `translateY(-${mobileButtonLiftPx}px)` } : undefined}
-          >
-            <div className="flex min-h-[4.375rem] flex-col space-y-1.5">
+            <div className="w-full max-w-[285px] shrink-0">
+            <div className="flex min-h-[7rem] flex-col justify-end space-y-1.5">
               {showActionButtons && (
                 <>
                   <button
@@ -629,6 +614,22 @@ const App: React.FC = () => {
                     <span>sit in the sun</span>
                     <span aria-hidden="true">→</span>
                   </button>
+                  <button
+                    ref={cafeBtnRef}
+                    type="button"
+                    disabled={!userLocation || buttonsExiting}
+                    onClick={() => handleActionWithExit(AppMode.CAFE)}
+                    className={`font-nyght-regular flex h-8 w-full items-center justify-between rounded-full border border-black bg-transparent px-6 text-base leading-none disabled:cursor-not-allowed disabled:opacity-40 ${
+                      buttonsExiting
+                        ? exitLeadButton === 'cafe'
+                          ? 'animate-action-button-exit'
+                          : 'animate-action-button-exit-delayed'
+                        : 'animate-slide-up-fade-in-delayed transition-all hover:bg-black hover:text-white active:scale-[0.98]'
+                    }`}
+                  >
+                    <span>find sunny cafes</span>
+                    <span aria-hidden="true">→</span>
+                  </button>
                 </>
               )}
             </div>
@@ -644,6 +645,7 @@ const App: React.FC = () => {
                 {error}
               </p>
             )}
+            </div>
           </div>
         </section>
       </main>
@@ -680,6 +682,7 @@ const App: React.FC = () => {
             path={generatedPath}
             walkedTrail={tracking.walkedTrail}
             benches={foundBenches ?? undefined}
+            cafes={foundCafes ?? undefined}
             mode={mode}
             displayDate={isSimulating ? effectiveTime : undefined}
             isCurrentlySunny={tracking.isCurrentlyInSun}
